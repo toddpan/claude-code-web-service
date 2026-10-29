@@ -1,0 +1,35 @@
+{
+  "name": "claude-code-web-service",
+  "version": "0.1.0",
+  "description": "把 Claude Code 能力封装成 HTTP + SSE Web 服务（接口形状对齐 zcode-web-service / dsh-web-service）：launchd 常驻、远程可访问，覆盖会话/流式/OpenAI 兼容/工作区/模型/文件/技能/提问桥/密钥管理",
+  "license": "MIT",
+  "type": "module",
+  "main": "server/service.mjs",
+  "bin": {
+    "claude-code-web-service": "server/service.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "claude-code",
+    "claude",
+    "sse",
+    "web-service",
+    "http-api",
+    "openai-compatible",
+    "agent"
+  ],
+  "files": [
+    "server",
+    "scripts",
+    "launchd",
+    "skills",
+    "vendor",
+    "README.md",
+    "package.json"
+  ],
+  "author": {
+    "name": "toddpan"
+  }
+}
