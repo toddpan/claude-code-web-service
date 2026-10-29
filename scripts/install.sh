@@ -3,7 +3,20 @@
 # 用法: bash scripts/install.sh [--port N] [--remote] [--reset-key] [--claude-bin PATH]
 set -euo pipefail
 
-PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# 支持两种运行方式：本地源码 bash scripts/install.sh，或在线管道
+# curl -fsSL https://raw.githubusercontent.com/toddpan/claude-code-web-service/main/scripts/install.sh | bash
+# （管道模式下自动下载仓库 tarball 到临时目录作为源）
+PLUGIN_ROOT=""
+if [[ -n "${BASH_SOURCE[0]:-}" && -f "${BASH_SOURCE[0]}" ]]; then
+  PLUGIN_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+fi
+if [[ -z "$PLUGIN_ROOT" ]]; then
+  TMPDL="$(mktemp -d)"
+  trap 'rm -rf "$TMPDL"' EXIT
+  echo "==> 在线安装：下载仓库到 ${TMPDL}"
+  curl -fsSL https://github.com/toddpan/claude-code-web-service/archive/refs/heads/main.tar.gz | tar xz -C "$TMPDL"
+  PLUGIN_ROOT="$TMPDL/claude-code-web-service-main"
+fi
 LABEL="com.claude-code.webservice"
 APP_DIR="${HOME}/.claude/claude-code-web-service"
 PLIST_SRC="${PLUGIN_ROOT}/launchd/${LABEL}.plist.tpl"
