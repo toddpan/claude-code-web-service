@@ -65,6 +65,8 @@ const DEFAULT_CONFIG = {
   sessionIdleTimeoutMs: 30 * 60_000,
   /** 并发会话进程上限 */
   maxSessions: 32,
+  /** 启动看门狗：spawn 后首条消息 N ms 内零输出（launchd/TCC 挂起）则杀掉重建重发一次 */
+  startupStallMs: 30_000,
   /** token 级流式（--include-partial-messages） */
   streamPartial: true,
 }
@@ -113,6 +115,7 @@ async function main() {
     sessionIdleTimeoutMs: cfg.sessionIdleTimeoutMs,
     maxSessions: cfg.maxSessions,
     turnStallTimeoutMs: cfg.turnStallTimeoutMs,
+    startupStallMs: cfg.startupStallMs,
     log: (level, msg, extra) => log(level, msg, extra),
   })
 

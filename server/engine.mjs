@@ -84,6 +84,11 @@ class ClaudeSession {
     this.stderrTail = []
     this.initWaiter = null
     this.closeTimer = null
+    /** setMode 显式改过模式后，system/init 的 permissionMode 不得回写覆盖（init 晚于首条消息到达） */
+    this.modeExplicitlySet = false
+    /** 启动看门狗：launchd/TCC 下 claude 偶发 spawn 后零输出挂起，首条消息后超时则杀掉重建重发一次 */
+    this.sawOutput = false
+    this.startupTimer = null
   }
 
   start(timeoutMs = 5_000) {
@@ -155,6 +160,8 @@ class ClaudeSession {
   }
 
   #handleLine(line) {
+    this.sawOutput = true
+    if (this.startupTimer) { clearTimeout(this.startupTimer); this.startupTimer = null }
     let raw
     try { raw = JSON.parse(line) } catch {
       this.engine.log('warn', `non-JSON claude line dropped: ${line.slice(0, 120)}`)
@@ -182,7 +189,7 @@ class ClaudeSession {
       const first = !this.claudeId
       this.claudeId = raw.session_id
       if (raw.model) this.model = raw.model
-      if (raw.permissionMode) this.requestedMode = raw.permissionMode
+      if (raw.permissionMode && !this.modeExplicitlySet) this.requestedMode = raw.permissionMode
       if (first) {
         // 真实 id 回填索引：--resume / transcript 定位都靠它
         this.engine.touchIndex(this.publicId, { claudeId: this.claudeId, model: this.model })
@@ -271,7 +278,8 @@ class ClaudeSession {
         costUsd: raw.total_cost_usd,
       })
     }
-    this.engine.touchIndex(this.publicId, { updatedAt: Date.now() })
+    // 会话已被 closeSession 删除时不得借 touchIndex 复活（空元数据僵尸条目）
+    if (this.engine.index.has(this.publicId)) this.engine.touchIndex(this.publicId, { updatedAt: Date.now() })
   }
 
   /** 我们发出的 control_request（interrupt/set_permission_mode/set_model）的应答 */
@@ -339,6 +347,20 @@ class ClaudeSession {
     this.deltas.text = 0
     this.deltas.thinking = 0
     this.engine.pushEvent(this.publicId, 'turn.started', { input: text })
+    // 启动看门狗：进程从未产出过任何输出（刚 spawn/复活）时武装；超时仍零输出则
+    // 杀掉重建（resume）并重发一次 —— launchd/TCC 偶发挂起的唯一可靠探测点。
+    // 每个会话只重试一次（engine.startupRetryDone 记账），避免坏环境无限重建。
+    if (!this.sawOutput && !this.startupTimer && !this.engine.startupRetryDone.has(this.publicId)) {
+      this.startupTimer = setTimeout(() => {
+        this.startupTimer = null
+        if (this.sawOutput || !this.alive) return
+        this.engine.startupRetryDone.add(this.publicId)
+        this.engine.log('warn', `claude startup stalled (no output within ${this.engine.startupStallMs}ms), respawning session=${this.publicId}`)
+        this.close({ timeoutMs: 0 })
+        void this.engine.retryStalledStart(this.publicId, text)
+      }, this.engine.startupStallMs)
+      this.startupTimer.unref?.()
+    }
     this.writeJSON({ type: 'user', message: { role: 'user', content: text } })
   }
 
@@ -374,6 +396,7 @@ class ClaudeSession {
 
   /** 分级收口：stdin end → SIGTERM → SIGKILL（对齐 cc-connect 的进程树清理经验） */
   close({ timeoutMs = 4000 } = {}) {
+    if (this.startupTimer) { clearTimeout(this.startupTimer); this.startupTimer = null }
     if (!this.child) { this.alive = false; return }
     const child = this.child
     try { child.stdin.end() } catch { /* gone */ }
@@ -405,7 +428,7 @@ export class ClaudeEngine extends EventEmitter {
     claudeBin = 'claude', cwd, dataDir, log = () => {}, requestTimeoutMs = 120_000,
     defaultMode = 'default', defaultModel = '', streamPartial = true,
     sessionIdleTimeoutMs = 30 * 60_000, maxSessions = 32, interactionTimeoutMs = 10 * 60_000,
-    turnStallTimeoutMs = 180_000,
+    turnStallTimeoutMs = 180_000, startupStallMs = 30_000,
   } = {}) {
     super()
     this.claudeBin = claudeBin
@@ -420,6 +443,9 @@ export class ClaudeEngine extends EventEmitter {
     this.maxSessions = Number(maxSessions) > 0 ? Number(maxSessions) : 32
     this.interactionTimeoutMs = interactionTimeoutMs
     this.turnStallTimeoutMs = Number(turnStallTimeoutMs) > 0 ? Number(turnStallTimeoutMs) : 180_000
+    this.startupStallMs = Number(startupStallMs) > 0 ? Number(startupStallMs) : 30_000
+    /** 启动看门狗已用掉重建机会的会话（每会话每服务生命周期一次） */
+    this.startupRetryDone = new Set()
 
     /** sessionId -> ClaudeSession（活跃进程） */
     this.sessions = new Map()
@@ -645,6 +671,22 @@ export class ClaudeEngine extends EventEmitter {
   }
 
   /**
+   * 启动看门狗回调：spawn 后首条消息 startupStallMs 内零输出（launchd/TCC 挂起形态）→
+   * 旧进程已杀，重建（resume，带 --permission-mode 等启动参数）并重发同一条消息一次。
+   * 事件游标按会话续算，等待方（waitTurn/SSE）无需感知换进程。
+   */
+  async retryStalledStart(sessionId, content) {
+    try {
+      await this.resumeSession({ sessionId })
+      await this.sendActive(sessionId, content)
+      this.log('info', `startup watchdog respawned session=${sessionId} and re-sent the prompt`)
+    } catch (e) {
+      this.log('warn', `startup watchdog respawn failed session=${sessionId}: ${e.message}`)
+      this.pushEvent(sessionId, 'turn.failed', { message: `claude startup stalled: ${e.message}` })
+    }
+  }
+
+  /**
    * 等待一轮完成并收集文本/思考/工具调用/token 账本。
    * 游标与停滞看门狗语义与 zcode-web-service engine.waitTurn 完全一致：
    * 每条新事件重置计时，只有持续无事件停滞超过 stallGap 才收口（interrupt 后
@@ -743,7 +785,7 @@ export class ClaudeEngine extends EventEmitter {
       if (it.sessionId === sessionId) this.dropInteraction(rid)
     }
     this.index.delete(sessionId)
-    this.persistIndex()
+    this.#persistIndex()
     return { closed: true }
   }
 
@@ -821,6 +863,7 @@ export class ClaudeEngine extends EventEmitter {
         this.log('warn', `set_permission_mode ${mode} deferred to next resume: ${e.message}`)
       }
       s.requestedMode = mode
+      s.modeExplicitlySet = true
     } else {
       appliedLive = false
       liveNote = 'session process not running; mode applied on next resume'
