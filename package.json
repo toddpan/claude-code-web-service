@@ -1,6 +1,6 @@
 {
   "name": "claude-code-web-service",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "把 Claude Code 能力封装成 HTTP + SSE Web 服务（接口形状对齐 zcode-web-service / dsh-web-service）：launchd 常驻、远程可访问，覆盖会话/流式/OpenAI 兼容/工作区/模型/文件/技能/提问桥/密钥管理",
   "license": "MIT",
   "type": "module",

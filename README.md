@@ -153,6 +153,7 @@ launchctl kickstart -k gui/$(id -u)/com.claude-code.webservice   # 改配置后�
 
 | 现象 | 处理 |
 |---|---|
+| claude 启动即退（code=1）：`--dangerously-skip-permissions cannot be used with root/sudo privileges` | 服务以 root 运行且会话用 `bypassPermissions`；v0.2.1 起 spawn 时自动注入 `IS_SANDBOX=1` 豁免（仅 root 特权下生效，见 spawn 日志的 `IS_SANDBOX=1(root)` 标记） |
 | 服务起不来 | `logs/launchd.err.log` / `logs/service.log`；先手动 `claude -p "hi"` 验证 CLI 与登录态 |
 | 403 FORBIDDEN_REMOTE | 远端访问未开：config 里 `allowRemote:true` |
 | 401 ADMIN_UNAUTHORIZED | 远程管理时令牌错误/缺失：`cat ~/.claude/claude-code-web-service/admin-token` |

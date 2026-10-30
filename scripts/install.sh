@@ -63,6 +63,7 @@ echo "==> 目标目录: ${APP_DIR}"
 mkdir -p "${APP_DIR}/logs"
 echo "==> 同步 server/ -> ${APP_DIR}/app/"
 rsync -a --delete "${PLUGIN_ROOT}/server/" "${APP_DIR}/app/"
+cp -f "${PLUGIN_ROOT}/package.json" "${APP_DIR}/package.json"   # /system/status 版本号来源（service.mjs 读 ../package.json）
 if [[ -d "${PLUGIN_ROOT}/vendor" ]]; then
   echo "==> 同步 vendor/ -> ${APP_DIR}/vendor/"
   rsync -a --delete "${PLUGIN_ROOT}/vendor/" "${APP_DIR}/vendor/"

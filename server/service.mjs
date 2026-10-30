@@ -1,11 +1,12 @@
-// service.mjs — claude-code-web-service 主入口（v0.1.0）
+// service.mjs — claude-code-web-service 主入口
 // 把 Claude Code 能力开放为 HTTP + SSE API，接口形状对齐 zcode-web-service / dsh-web-service。
 // 零依赖 Node（>=18）。运行：node service.mjs [--config <path>] [--port N] [--data-dir <dir>]
 import { createServer } from 'node:http'
 import { readFile, mkdir } from 'node:fs/promises'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 
@@ -25,7 +26,12 @@ import { registerQuestionRoutes } from './routes/questions.mjs'
 import { registerApiKeyRoutes } from './routes/keys.mjs'
 import { collectEvents } from './replay.mjs'
 
-const SERVICE_VERSION = '0.1.0'
+// 版本号以 package.json 为单一事实来源（避免硬编码随版本递进脱节）
+const SERVICE_VERSION = (() => {
+  try {
+    return JSON.parse(readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'package.json'), 'utf8')).version
+  } catch { return 'unknown' }
+})()
 const execFileAsync = promisify(execFile)
 
 // ---------- config ----------

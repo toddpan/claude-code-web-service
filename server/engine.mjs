@@ -105,12 +105,13 @@ class ClaudeSession {
     if (this.model) args.push('--model', this.model)
     if (this.effort) args.push('--effort', this.effort)
     if (this.name) args.push('--name', this.name)
-    this.engine.log('info', `claude spawn: ${this.engine.claudeBin} ${args.join(' ')} (cwd=${this.cwd})`)
+    const env = claudeEnv(this.requestedMode)
+    this.engine.log('info', `claude spawn: ${this.engine.claudeBin} ${args.join(' ')} (cwd=${this.cwd}${env.IS_SANDBOX ? ', IS_SANDBOX=1(root)' : ''})`)
 
     const child = spawn(this.engine.claudeBin, args, {
       cwd: this.cwd,
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: claudeEnv(),
+      env,
     })
     this.child = child
     this.alive = true
@@ -1098,12 +1099,18 @@ export class ClaudeEngine extends EventEmitter {
 
 // ---------------------------------------------------------------------------
 
-/** 过滤嵌套检测环境变量（服务可能跑在 claude 会话里），保留 ANTHROPIC_* 等鉴权变量 */
-function claudeEnv() {
+/** 过滤嵌套检测环境变量（服务可能跑在 claude 会话里），保留 ANTHROPIC_* 等鉴权变量。
+ * mode=bypassPermissions 且进程持有 root 特权时注入 IS_SANDBOX=1：CLI 对 root/sudo
+ * 下的 --dangerously-skip-permissions 会在启动阶段直接 exit 1，容器/受控节点的官方
+ * 豁免开关即此变量（非 root 时保持默认行为，不引入多余副作用）。 */
+function claudeEnv(mode) {
   const env = {}
   for (const [k, v] of Object.entries(process.env)) {
     if (k === 'CLAUDECODE' || k === 'CLAUDE_CODE_ENTRYPOINT' || k === 'CLAUDE_CODE_SSE_PORT') continue
     env[k] = v
+  }
+  if (mode === 'bypassPermissions' && (process.getuid?.() === 0 || process.geteuid?.() === 0)) {
+    env.IS_SANDBOX = '1'
   }
   return env
 }
